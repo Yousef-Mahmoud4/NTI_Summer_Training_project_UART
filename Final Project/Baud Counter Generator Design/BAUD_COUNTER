@@ -1,0 +1,35 @@
+`timescale 1ns/1ps
+module BAUD_COUNTER #(
+    parameter CLOCK_FREQ = 100_000_000,   // 100 MHz clock
+    parameter BAUD_RATE  = 9600           // Baud rate
+)(
+    input  wire clk,        // system clock
+    input  wire reset,      // active high reset
+    output reg  baud_enable, // stays high for the whole baud period
+    output reg  baud_tick    // 1-cycle pulse at baud period boundary
+);
+
+    // Number of system clock cycles in one baud interval
+    parameter BAUD_PERIOD = CLOCK_FREQ / BAUD_RATE;
+
+    reg [31:0] counter;
+
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            counter     <= BAUD_PERIOD - 1;
+            baud_enable <= 1'b0;
+            baud_tick   <= 1'b0;
+        end else begin
+            if (counter == 0) begin
+                counter     <= BAUD_PERIOD - 1;
+                baud_enable <= 1'b1;   // restart of baud period
+                baud_tick   <= 1'b1;   // 1 cycle pulse
+            end else begin
+                counter     <= counter - 1;
+                baud_enable <= 1'b1;   // keep high during counting
+                baud_tick   <= 1'b0;   // pulse only at boundary
+            end
+        end
+    end
+
+endmodule
