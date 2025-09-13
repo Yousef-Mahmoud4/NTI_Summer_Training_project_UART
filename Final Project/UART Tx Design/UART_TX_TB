@@ -1,0 +1,105 @@
+`timescale 1ns/1ps
+module UART_TX_TB;
+
+    parameter CLOCK_FREQ  = 100_000_000;   // 100 MHz
+    parameter BAUD_RATE   = 9600;
+    parameter CLK_PERIOD  = 10;            // 100 MHz clock = 10 ns
+    parameter BAUD_CYCLES = CLOCK_FREQ / BAUD_RATE; // ~10416 cycles
+    parameter FRAME_CYCLES = (1+8+1) * BAUD_CYCLES; // start + 8 data + stop
+
+    // DUT signals
+    reg clk;
+    reg reset;
+    reg start;
+    reg [7:0] tx_data;
+    wire tx_out;
+    wire busy;
+    wire done;
+
+    // Instantiate DUT
+    UART_TX #(
+        .CLOCK_FREQ(CLOCK_FREQ),
+        .BAUD_RATE(BAUD_RATE)
+    ) uut (
+        .clk(clk),
+        .reset(reset),
+        .start(start),
+        .tx_data(tx_data),
+        .tx_out(tx_out),
+        .busy(busy),
+        .done(done)
+    );
+
+    // Clock generation
+    initial begin
+        clk = 0;
+        forever #(CLK_PERIOD/2) clk = ~clk;
+    end
+
+    // Task to send a byte
+    task send_byte(input [7:0] data);
+    begin
+        tx_data = data;
+        start   = 1;
+        #(CLK_PERIOD);
+        start   = 0;
+        $display("Time %0t: Sending 0x%0h", $time, data);
+        #(FRAME_CYCLES*CLK_PERIOD); // wait one full frame
+        if (done)
+            $display("Time %0t: Done sending 0x%0h", $time, data);
+        else
+            $display("Time %0t: ERROR! TX did not assert done for 0x%0h", $time, data);
+    end
+    endtask
+
+    // Stimulus
+    initial begin
+        // Init
+        reset   = 1;
+        start   = 0;
+        tx_data = 8'h00;
+        #(20*CLK_PERIOD);
+        reset = 0;
+
+        #(100*CLK_PERIOD);
+
+        // Basic transmissions
+        send_byte(8'hA5);
+        send_byte(8'hFF);
+        send_byte(8'h00);
+
+        // Corner case 1: back-to-back transmission (no idle gap)
+        $display("Corner Case: Back-to-back transmission");
+        tx_data = 8'h55; start = 1; #(CLK_PERIOD); start = 0;
+        #(FRAME_CYCLES*CLK_PERIOD); 
+        tx_data = 8'hAA; start = 1; #(CLK_PERIOD); start = 0;
+        #(FRAME_CYCLES*CLK_PERIOD);
+
+        // Corner case 2: start held high multiple cycles
+        $display("Corner Case: Start held high multiple cycles");
+        tx_data = 8'hC3;
+        start   = 1;
+        #(5*CLK_PERIOD); // hold high longer than 1 cycle
+        start   = 0;
+        #(FRAME_CYCLES*CLK_PERIOD);
+
+        // Corner case 3: reset during transmission
+        $display("Corner Case: Reset during transmission");
+        tx_data = 8'h5A;
+        start   = 1; #(CLK_PERIOD); start = 0;
+        #(FRAME_CYCLES/2*CLK_PERIOD); // half way through
+        reset = 1;
+        #(20*CLK_PERIOD);
+        reset = 0;
+        #(FRAME_CYCLES*CLK_PERIOD);
+
+        // Corner case 4: alternating patterns
+        send_byte(8'h55);
+        send_byte(8'hAA);
+
+        // Finish simulation
+        #(10*BAUD_CYCLES*CLK_PERIOD);
+        $stop;
+    end
+
+endmodule
