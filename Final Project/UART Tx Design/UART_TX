@@ -1,0 +1,106 @@
+`timescale 1ns/1ps
+module UART_TX #(
+    parameter CLOCK_FREQ = 100_000_000,   // 100 MHz
+    parameter BAUD_RATE  = 9600
+)(
+    input  wire clk,
+    input  wire reset,
+    input  wire start,        // Signal to start transmission
+    input  wire [7:0] tx_data,// Byte to transmit
+    output reg  tx_out,       // UART TX line
+    output reg  busy,         // High during transmission
+    output reg  done          // 1-cycle pulse when finished
+);
+
+    // =====================================================
+    // Instantiate Baud Counter
+    // =====================================================
+    wire baud_enable;
+    wire baud_tick;
+
+    BAUD_COUNTER#(
+        .CLOCK_FREQ(CLOCK_FREQ),
+        .BAUD_RATE(BAUD_RATE)
+    ) baud_gen (
+        .clk(clk),
+        .reset(reset),
+        .baud_enable(baud_enable),
+        .baud_tick(baud_tick)
+    );
+
+    // =====================================================
+    // FSM States
+    // =====================================================
+    localparam [2:0] 
+        IDLE = 3'b000,
+        START= 3'b001,
+        DATA = 3'b010,
+        STOP = 3'b011,
+        DONE = 3'b100;
+
+    reg [2:0] state;
+    reg [3:0] bit_index;    // Counts data bits
+    reg [7:0] shift_reg;    // Holds data to send
+
+    // =====================================================
+    // Sequential FSM
+    // =====================================================
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            state     <= IDLE;
+            tx_out    <= 1'b1; // idle line is high
+            busy      <= 0;
+            done      <= 0;
+            bit_index <= 0;
+            shift_reg <= 0;
+        end else begin
+            done <= 0; // default
+            case (state)
+                // --------------------------------------------
+                IDLE: begin
+                    tx_out <= 1'b1; // idle
+                    busy   <= 0;
+                    if (start) begin
+                        busy      <= 1;
+                        shift_reg <= tx_data;
+                        bit_index <= 0;
+                        state     <= START;
+                    end
+                end
+
+                // --------------------------------------------
+                START: begin
+                    if (baud_tick) begin
+                        tx_out <= 1'b0; // start bit
+                        state  <= DATA;
+                    end
+                end
+                // --------------------------------------------
+                DATA: begin
+                    if (baud_tick) begin
+                        tx_out    <= shift_reg[0];       // LSB first
+                        shift_reg <= {1'b0, shift_reg[7:1]}; // shift right
+                        bit_index <= bit_index + 1;
+                        if (bit_index == 7)
+                            state <= STOP;
+                    end
+                end
+                // --------------------------------------------
+                STOP: begin
+                    if (baud_tick) begin
+                        tx_out <= 1'b1; // stop bit
+                        state  <= DONE;
+                    end
+                end
+                // --------------------------------------------
+                DONE: begin
+                    done  <= 1; // pulse
+                    busy  <= 0;
+                    state <= IDLE;
+                end
+
+            endcase
+        end
+    end
+endmodule
+
