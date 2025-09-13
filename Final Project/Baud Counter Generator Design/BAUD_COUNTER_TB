@@ -1,0 +1,47 @@
+`timescale 1ns/1ps
+module BAUD_COUNTER_TB;
+
+    // Parameters
+    parameter CLOCK_FREQ = 100_000_000;   // 100 MHz
+    parameter BAUD_RATE  = 9600;
+
+    // Clock period = 10 ns for 100 MHz
+    parameter CLK_PERIOD = 10;
+
+    // DUT signals
+    reg clk;
+    reg reset;
+    wire baud_enable;
+    wire baud_tick;
+
+    // Instantiate DUT
+    BAUD_COUNTER #(
+        .CLOCK_FREQ(CLOCK_FREQ),
+        .BAUD_RATE(BAUD_RATE)
+    ) uut (
+        .clk(clk),
+        .reset(reset),
+        .baud_enable(baud_enable),
+        .baud_tick(baud_tick)
+    );
+
+    // Clock generation
+    initial begin
+        clk = 0;
+        forever #(CLK_PERIOD/2) clk = ~clk;  // 100 MHz clock
+    end
+
+    // Stimulus
+    initial begin
+        // Apply reset
+        reset = 1;
+        #(5*CLK_PERIOD);   // hold reset for a few cycles
+        reset = 0;
+
+        // Run long enough to see several baud periods
+        #(20*10416*CLK_PERIOD); // simulate ~20 baud periods
+
+        $stop;  // finish simulation
+    end
+
+endmodule
