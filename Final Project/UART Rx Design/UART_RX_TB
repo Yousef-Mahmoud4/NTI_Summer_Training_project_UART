@@ -1,0 +1,123 @@
+`timescale 1ns/1ps
+module UART_RX_TB;
+
+    parameter CLOCK_FREQ = 100_000_000;   // 100 MHz
+    parameter BAUD_RATE  = 9600;
+    parameter CLK_PERIOD = 10;            // 100 MHz clock = 10 ns
+    parameter BAUD_PERIOD = CLOCK_FREQ / BAUD_RATE; // ~10416 cycles
+
+    // DUT signals
+    reg clk;
+    reg reset;
+    reg rx_in;
+    wire [7:0] rx_data;
+    wire done;
+    wire busy;
+    wire err;
+
+    // Instantiate UART RX
+    UART_RX #(
+        .CLOCK_FREQ(CLOCK_FREQ),
+        .BAUD_RATE(BAUD_RATE)
+    ) uut (
+        .clk(clk),
+        .reset(reset),
+        .rx_in(rx_in),
+        .rx_data(rx_data),
+        .done(done),
+        .busy(busy),
+        .err(err)
+    );
+
+    // Clock generation
+    initial begin
+        clk = 0;
+        forever #(CLK_PERIOD/2) clk = ~clk; // 100 MHz clock
+    end
+
+    // Task to send a UART frame (1 start + 8 data + 1 stop)
+    task send_byte;
+        input [7:0] data;
+        integer i;
+        begin
+            // Start bit (low)
+            rx_in = 0;
+            #(BAUD_PERIOD*CLK_PERIOD);
+
+            // Send 8 data bits, LSB first
+            for (i=0; i<8; i=i+1) begin
+                rx_in = data[i];
+                #(BAUD_PERIOD*CLK_PERIOD);
+            end
+
+            // Stop bit (high)
+            rx_in = 1;
+            #(BAUD_PERIOD*CLK_PERIOD);
+        end
+    endtask
+
+    // Stimulus
+    initial begin
+        // Init
+        rx_in = 1; // idle high
+        reset = 1;
+        #(20*CLK_PERIOD);
+        reset = 0;
+
+        // Wait a little
+        #(100*CLK_PERIOD);
+
+        // === Basic Valid Frames ===
+        $display("Sending 0xA5 ...");
+        send_byte(8'hA5);
+
+        #(BAUD_PERIOD*CLK_PERIOD*2);
+        if (done)
+            $display("PASS: Time %0t: Received = 0x%h", $time, rx_data);
+        else
+            $display("FAIL: No data received!");
+
+        $display("Sending 0xFF ...");
+        send_byte(8'hFF);
+
+        #(BAUD_PERIOD*CLK_PERIOD*2);
+        if (done)
+            $display("PASS: Time %0t: Received = 0x%h", $time, rx_data);
+
+        $display("Sending 0x00 ...");
+        send_byte(8'h00);
+
+        #(BAUD_PERIOD*CLK_PERIOD*2);
+        if (done)
+            $display("PASS: Time %0t: Received = 0x%h", $time, rx_data);
+
+        // === Corner Cases ===
+
+        // 1. Back-to-back frames without idle
+        $display("Sending back-to-back 0x55 and 0xAA...");
+        send_byte(8'h55);
+        send_byte(8'hAA); // no gap
+        #(BAUD_PERIOD*CLK_PERIOD*4);
+
+        // 2. Frame with missing stop bit (force error)
+        $display("Sending corrupted frame (no stop bit)...");
+        rx_in = 0; #(BAUD_PERIOD*CLK_PERIOD); // start
+        rx_in = 1'b1; #(BAUD_PERIOD*CLK_PERIOD*8); // dummy data
+        rx_in = 0; #(BAUD_PERIOD*CLK_PERIOD); // invalid stop
+        rx_in = 1; #(BAUD_PERIOD*CLK_PERIOD*2); // back to idle
+
+        if (err)
+            $display("PASS: Error detected correctly at %0t", $time);
+        else
+            $display("FAIL: Error not detected!");
+
+        // 3. Send maximum value (0xFF) followed by minimum (0x00)
+        $display("Sending 0xFF followed by 0x00...");
+        send_byte(8'hFF);
+        send_byte(8'h00);
+        #(BAUD_PERIOD*CLK_PERIOD*4);
+
+        $stop; // end simulation
+    end
+
+endmodule
